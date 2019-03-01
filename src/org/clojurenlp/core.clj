@@ -210,7 +210,8 @@
 
 (defmethod parse :default [coll]
   [coll]
-  "Use the LexicalizedParser to produce a constituent parse of sequence of strings or CoreNLP Word objects."
+  "Use the LexicalizedParser to produce a constituent parse of
+  sequence of strings or CoreNLP Word objects."
   (.apply ^ParserGrammar (load-parser)
           (ArrayList.
            ^Collection (map word coll))))
@@ -224,14 +225,17 @@
    (set (map second (:edges dp)))))
 
 (defn add-roots [dp]
-  "Add explicit ROOT relations to the dependency parse. This will turn it from a polytree to a tree."
+  "Add explicit ROOT relations to the dependency parse. This will turn
+  it from a polytree to a tree."
   (assoc dp :edges
          (concat (:edges dp)
           (for [r (roots dp)]
             [-1 r :root]))))
 
 (defmulti dependency-parse 
-  "Produce a DependencyParse from a sentence, which is a directed graph structure whose nodes are words and edges are typed dependencies (Marneffe et al, 2005) between them." 
+  "Produce a DependencyParse from a sentence, which is a directed graph
+  structure whose nodes are words and edges are typed
+  dependencies (Marneffe et al, 2005) between them." 
   class)
 
 (let [tlp (PennTreebankLanguagePack.)
