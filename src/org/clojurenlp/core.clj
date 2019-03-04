@@ -1,9 +1,10 @@
 (ns org.clojurenlp.core
-  (:require
-   [clojure.data.json :as json]
-   [clojure.set :as set]
-   [loom.attr :as attr]
-   [loom.graph :as graph])
+  (:require [clojure.data.json :as json]
+            [clojure.string :as string]
+            [clojure.set :as set]
+            [loom.attr :as attr]
+            [loom.graph :as graph]
+            [clojure.java.io :as io])
   (:import (java.io StringReader)
            (java.util ArrayList
                       Collection
@@ -27,6 +28,10 @@
                                   Word))
   (:gen-class :main true))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; utilities
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn pprint-methods! 
   "Simplifies object representation in REPL 
    from
@@ -43,6 +48,10 @@
 
 (pprint-methods! [CoreLabel TaggedWord Word])
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; tokenize
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn- tokenize-corelabels [text]
   "Tokenize an input string into a sequence of CoreLabel objects"
   (.tokenize
@@ -57,6 +66,9 @@
             :end-offset (.endPosition %))
          core-labels)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; sentences
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn split-sentences [text]
   "Split a string into a sequence of sentences, each of which is a sequence of CoreLabels"
@@ -83,6 +95,9 @@
                :end-offset (sentence-end-offset %))
          core-labels-list)))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; words
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defmulti word 
   "Attempt to convert a given object into a Word, which is used by many downstream algorithms."
@@ -96,6 +111,10 @@
 (defmethod word Word [w] w)
 
 (defmethod word :default [x] (Word. x))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; position tagging
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (def ^{:private true} 
   load-pos-tagger
@@ -127,19 +146,28 @@
 (defmethod pos-tag :default [coll]
   (tag-words ^Collection coll))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; named entity recognition
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (defn initialize-pipeline
   "0 Arity: Build NER tagging pipeline; use Stanford model
    1 Arity: Build NER tagging pipeline; use custom model"
-  ([]
-   (let [ner-props (Properties.)]
-     (.put ner-props "annotators" "tokenize, ssplit, pos, lemma, ner")
-     (StanfordCoreNLP. ner-props true)))
-
-  ([model-path]
-   (let [ner-props (Properties.)]
-     (.put ner-props "annotators" "tokenize, ssplit, pos, lemma, ner")
-     (.put ner-props "ner.model" model-path)
-     (StanfordCoreNLP. ner-props true))))
+  ([& {:keys [annotators ner-model]
+       :or {annotators "tokenize, ssplit, pos, lemma, ner"}
+       :as ka}]
+   (let [kw-form (fn [s] (string/replace (name s) #"-" "."))
+         props (let [t (doto (Properties.) (.put "annotators" annotators))
+                     ms (select-keys ka [:ner-model])
+                     cl (str (io/resource "english.all.3class.caseless.distsim.crf.ser.gz"))]
+                 (if (seq ms)
+                   (reduce (fn [t [k v]]
+                             (if (and (= v :caseless) (= k :ner-model))
+                               (do (.put t (kw-form k) cl) t)
+                               (do (.put t (kw-form k) v) t)))
+                           t ms)
+                   t))]
+     (StanfordCoreNLP. props true))))
 
 (defn- annotate-text
   "Annotates text tokens with named entity type.
@@ -174,7 +202,8 @@
 
 (defn tag-ner
   "Returns a map object containing original text, tokens, sentences"
-  ([pipeline text] (get-sentences-annotation (annotate-text pipeline text))))
+  ([pipeline text]
+   (get-sentences-annotation (annotate-text pipeline text))))
 
 
 (let [trf (LabeledScoredTreeReaderFactory.)]
