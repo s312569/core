@@ -23,8 +23,10 @@
            (edu.stanford.nlp.pipeline Annotation StanfordCoreNLP)
            (edu.stanford.nlp.ling CoreAnnotations$SentencesAnnotation
                                   CoreAnnotations$TextAnnotation
+                                  CoreAnnotations$PartOfSpeechAnnotation
                                   CoreAnnotations$NamedEntityTagAnnotation
                                   CoreAnnotations$TokensAnnotation
+                                  CoreAnnotations$LemmaAnnotation
                                   Word))
   (:gen-class :main true))
 
@@ -47,6 +49,8 @@
        (str "#<" (.getSimpleName o) " " (.toString piece) ">")))))
 
 (pprint-methods! [CoreLabel TaggedWord Word])
+
+(def caseless-model (str (io/resource "english.all.3class.caseless.distsim.crf.ser.gz")))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; tokenize
@@ -153,21 +157,15 @@
 (defn initialize-pipeline
   "0 Arity: Build NER tagging pipeline; use Stanford model
    1 Arity: Build NER tagging pipeline; use custom model"
-  ([& {:keys [annotators ner-model]
-       :or {annotators "tokenize, ssplit, pos, lemma, ner"}
-       :as ka}]
-   (let [kw-form (fn [s] (string/replace (name s) #"-" "."))
-         props (let [t (doto (Properties.) (.put "annotators" annotators))
-                     ms (select-keys ka [:ner-model])
-                     cl (str (io/resource "english.all.3class.caseless.distsim.crf.ser.gz"))]
-                 (if (seq ms)
-                   (reduce (fn [t [k v]]
-                             (if (and (= v :caseless) (= k :ner-model))
-                               (do (.put t (kw-form k) cl) t)
-                               (do (.put t (kw-form k) v) t)))
-                           t ms)
-                   t))]
-     (StanfordCoreNLP. props true))))
+  ([]
+   (let [ner-props (Properties.)]
+     (.put ner-props "annotators" "tokenize, ssplit, pos, lemma, ner, entitymentions")
+     (StanfordCoreNLP. ner-props true)))
+  ([model-path]
+   (let [ner-props (Properties.)]
+     (.put ner-props "annotators" "tokenize, ssplit, pos, lemma, ner, entitymentions")
+     (.put ner-props "ner.model" model-path)
+     (StanfordCoreNLP. ner-props true))))
 
 (defn- annotate-text
   "Annotates text tokens with named entity type.
@@ -180,6 +178,8 @@
   [tok-ann]
   {:token (.get tok-ann CoreAnnotations$TextAnnotation)
    :named-entity (.get tok-ann CoreAnnotations$NamedEntityTagAnnotation)
+   :pos (.get tok-ann CoreAnnotations$PartOfSpeechAnnotation)
+   :lemma (.get tok-ann CoreAnnotations$LemmaAnnotation)
    :start-offset (.beginPosition tok-ann)
    :end-offset (.endPosition tok-ann)})
 
@@ -200,11 +200,20 @@
   [^Annotation annotation]
   (map get-text-tokens (.get annotation CoreAnnotations$SentencesAnnotation)))
 
-(defn tag-ner
+(defn ner-tag
   "Returns a map object containing original text, tokens, sentences"
-  ([pipeline text]
-   (get-sentences-annotation (annotate-text pipeline text))))
+  [text & {:keys [model caseless]
+           :or {model false caseless false}}]
+  (cond caseless
+        (get-sentences-annotation (annotate-text (initialize-pipeline caseless-model) text))
+        model
+        (get-sentences-annotation (annotate-text (initialize-pipeline model) text))
+        :else
+        (get-sentences-annotation (annotate-text (initialize-pipeline) text))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; tree parsing
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (let [trf (LabeledScoredTreeReaderFactory.)]
 
